@@ -12,7 +12,7 @@ import {
   updateGitLabWorkspace,
   type GitLabConnection
 } from "./gitlab";
-import { calculateExpectedImpact, formatCalculatedValue, formatImpactSummary, measureForCalculation } from "./impact";
+import { calculateExpectedImpact, formatCalculatedValue, formatImpactSummary, formatSignedCalculatedValue, measureForCalculation } from "./impact";
 import { qualityHints, workspaceHints } from "./quality";
 import type {
   ActualMovementItem,
@@ -1024,9 +1024,20 @@ function ImpactTablePage({ workspace, updateWorkspace }: { workspace: CommitLabW
                       return (
                         <td key={strategy.id}>
                           <button className={`impact-cell ${impactClass(impact, calculated?.calculationWarning)}`} onClick={() => setEditing({ measureId: row.measure.id, strategyId: strategy.id })}>
-                            <strong>{impact ? formatImpactSummary(impact) : "No impact"}</strong>
-                            <span>Confidence {impact?.confidenceScore ?? 0}</span>
-                            {calculated?.riskAdjustedProjectedValue !== undefined && <span>Risk-adjusted {formatCalculatedValue(calculated.riskAdjustedProjectedValue, row.measure.unit)}</span>}
+                            {impact && calculated?.riskAdjustedDelta !== undefined ? (
+                              <>
+                                <strong className="risk-adjusted-delta">{formatSignedCalculatedValue(calculated.riskAdjustedDelta, row.measure.unit)}</strong>
+                                <span className="risk-adjusted-label">risk-adjusted movement</span>
+                                <span>Projected {formatCalculatedValue(calculated.riskAdjustedProjectedValue, row.measure.unit)}</span>
+                                <span className="raw-impact">Identified {formatSignedCalculatedValue(calculated.rawDelta, row.measure.unit)} from {formatImpactSummary(impact)}</span>
+                                <span>Confidence {impact.confidenceScore}</span>
+                              </>
+                            ) : (
+                              <>
+                                <strong>{impact ? formatImpactSummary(impact) : "No impact"}</strong>
+                                <span>Confidence {impact?.confidenceScore ?? 0}</span>
+                              </>
+                            )}
                             {calculated?.calculationWarning && <span>{calculated.calculationWarning}</span>}
                           </button>
                         </td>

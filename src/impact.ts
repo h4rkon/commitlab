@@ -94,6 +94,12 @@ export function formatCalculatedValue(value: number | undefined, unit: string | 
   return `${formatted} ${unit}`;
 }
 
+export function formatSignedCalculatedValue(value: number | undefined, unit: string | undefined) {
+  if (value === undefined) return "";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${formatCalculatedValue(value, unit)}`;
+}
+
 export function formatImpactSummary(impact: ExpectedImpactItem) {
   const sign = impact.numericDirection === "decrease" ? "-" : "+";
   const suffix = impact.impactMode === "absolute" ? "" : "%";
