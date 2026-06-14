@@ -3,8 +3,12 @@ export type TargetLabel = "actual" | "tolerable" | "goal" | "wish";
 export type Effort = "small" | "medium" | "large" | "unknown";
 export type StrategyStatus = "draft" | "active" | "done" | "paused";
 export type Confidence = "low" | "medium" | "high" | "unknown";
-export type EvidenceSourceType = "note" | "url" | "gitlab" | "document" | "meeting" | "other";
-export type LinkedEntityType = "value" | "measure" | "target" | "strategyGroup" | "strategy" | "expectedImpact";
+export type ImpactMode = "absolute" | "relative" | "gapClosure";
+export type NumericDirection = "increase" | "decrease";
+export type EvidenceStrength = 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1;
+export type EvidenceSourceType = "note" | "url" | "gitlab" | "document" | "meeting" | "metric" | "crm" | "customerFeedback" | "expertJudgement" | "benchmark" | "other";
+export type EvidencePosition = "supports" | "challenges" | "neutral";
+export type LinkedEntityType = "value" | "measure" | "target" | "strategyGroup" | "strategy" | "strategyOption" | "expectedImpact" | "actualMovement";
 export type EntityType = "values" | "measures" | "targets" | "strategyGroups" | "strategies" | "expectedImpacts" | "evidence" | "actualMovements";
 
 export interface WorkspaceMetadata {
@@ -88,10 +92,14 @@ export interface ExpectedImpactItem {
   id: string;
   strategyId: string;
   measureId: string;
-  score: number;
-  confidence?: Confidence;
+  impactMode: ImpactMode;
+  impactValue: number;
+  numericDirection?: NumericDirection;
+  confidenceScore: EvidenceStrength;
   rationale?: string;
-  evidenceId?: string;
+  assumptions?: string;
+  openQuestions?: string;
+  evidenceIds?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -104,6 +112,8 @@ export interface EvidenceItem {
   linkedEntityId?: string;
   sourceType?: EvidenceSourceType;
   source?: string;
+  position?: EvidencePosition;
+  evidenceStrength?: EvidenceStrength;
   createdAt: string;
   updatedAt: string;
 }

@@ -10,6 +10,7 @@ import type {
   TargetItem,
   ValueItem
 } from "./types";
+import { calculateExpectedImpact, measureForCalculation } from "./impact";
 
 export function qualityHints(type: EntityType, item: unknown, workspace: CommitLabWorkspace): string[] {
   switch (type) {
@@ -24,7 +25,7 @@ export function qualityHints(type: EntityType, item: unknown, workspace: CommitL
     case "strategies":
       return strategyHints(item as StrategyItem, workspace);
     case "expectedImpacts":
-      return impactHints(item as ExpectedImpactItem);
+      return impactHints(item as ExpectedImpactItem, workspace);
     case "evidence":
       return evidenceHints(item as EvidenceItem);
     case "actualMovements":
@@ -87,15 +88,36 @@ function strategyHints(strategy: StrategyItem, workspace: CommitLabWorkspace) {
   return hints;
 }
 
-function impactHints(impact: ExpectedImpactItem) {
+function impactHints(impact: ExpectedImpactItem, workspace: CommitLabWorkspace) {
   const hints: string[] = [];
   if (!impact.strategyId) hints.push("No strategy linked.");
   if (!impact.measureId) hints.push("No measurement row linked.");
-  if (impact.score < 0 || impact.score > 1) hints.push("Impact score must be between 0 and 1.");
+  if (!Number.isFinite(impact.impactValue)) hints.push("Impact value is missing.");
+  if ((impact.impactMode === "absolute" || impact.impactMode === "relative") && !impact.numericDirection) hints.push(`${labelImpactMode(impact.impactMode)} impact requires numeric direction.`);
+  if (impact.impactMode === "gapClosure" && (impact.impactValue < 0 || impact.impactValue > 100)) hints.push("Gap closure should be between 0 and 100 percent.");
+  if (impact.impactMode === "relative" && impact.impactValue < 0) hints.push("Relative impact should be zero or higher; use direction for decrease.");
+  if (impact.impactMode === "absolute" && impact.impactValue < 0) hints.push("Absolute impact should be zero or higher; use direction for decrease.");
   if (!impact.rationale) hints.push("No rationale defined.");
-  if (!impact.evidenceId) hints.push("No evidence linked.");
-  if (!impact.confidence || impact.confidence === "unknown") hints.push("Confidence is unknown.");
+  if (!impact.evidenceIds?.length) hints.push("No evidence linked.");
+  if (impact.confidenceScore <= 0.2) hints.push("Confidence score is low.");
+  const measure = workspace.measures.find((item) => item.id === impact.measureId);
+  if (measure) {
+    const calculated = calculateExpectedImpact(measureForCalculation(measure), impact);
+    if (calculated.calculationWarning) hints.push(`Impact is recorded but cannot yet be calculated: ${calculated.calculationWarning}`);
+    if (calculated.rawProjectedValue !== undefined && measure.target) {
+      const now = measureForCalculation(measure).now;
+      const target = measureForCalculation(measure).target;
+      if (now !== undefined && target !== undefined && Math.abs(target - calculated.rawProjectedValue) > Math.abs(target - now)) {
+        hints.push("Impact projection moves away from target.");
+      }
+    }
+  }
   return hints;
+}
+
+function labelImpactMode(mode: ExpectedImpactItem["impactMode"]) {
+  if (mode === "gapClosure") return "Gap closure";
+  return mode[0].toUpperCase() + mode.slice(1);
 }
 
 function evidenceHints(evidence: EvidenceItem) {

@@ -3,6 +3,8 @@ import type {
   CommitLabWorkspace,
   EntityType,
   EvidenceItem,
+  Confidence,
+  EvidenceStrength,
   ExpectedImpactItem,
   MeasureItem,
   StrategyGroupItem,
@@ -194,11 +196,11 @@ export function createDemoWorkspace(): CommitLabWorkspace {
   workspace.strategyGroups = strategyGroups;
   workspace.strategies = strategies;
   workspace.expectedImpacts = [
-    makeImpact("str_commitlab_workshops", "mea_quality_review", 0.8, "medium", "Workshops should make values, measures, and strategy assumptions explicit before execution starts."),
-    makeImpact("str_commitlab_workshops", "mea_alignment", 0.9, "medium", "Shared review should expose mismatches between organizational priorities and client-facing strategies."),
-    makeImpact("str_conlab_gtm", "mea_alignment", 0.5, "medium", "A ConLab-crafted GTM package can express one strategy clearly, but it must trace back to CommitLab values."),
-    makeImpact("str_pattern_library", "mea_reuse", 0.9, "medium", "Reusable patterns directly support reuse across initiatives."),
-    makeImpact("str_governance", "mea_quality_review", 0.4, "low", "Governance may improve consistency if it stays lightweight and evidence-oriented.")
+    makeImpact("str_commitlab_workshops", "mea_quality_review", "gapClosure", 60, 0.6, "Workshops should make values, measures, and strategy assumptions explicit before execution starts."),
+    makeImpact("str_commitlab_workshops", "mea_alignment", "gapClosure", 70, 0.6, "Shared review should expose mismatches between organizational priorities and client-facing strategies."),
+    makeImpact("str_conlab_gtm", "mea_alignment", "gapClosure", 35, 0.6, "A ConLab-crafted GTM package can express one strategy clearly, but it must trace back to CommitLab values."),
+    makeImpact("str_pattern_library", "mea_reuse", "gapClosure", 75, 0.6, "Reusable patterns directly support reuse across initiatives."),
+    makeImpact("str_governance", "mea_quality_review", "gapClosure", 25, 0.4, "Governance may improve consistency if it stays lightweight and evidence-oriented.")
   ];
   workspace.evidence = [
     {
@@ -226,14 +228,22 @@ export function createDemoWorkspace(): CommitLabWorkspace {
   return workspace;
 }
 
-function makeImpact(strategyId: string, measureId: string, score: number, confidence: ExpectedImpactItem["confidence"], rationale: string): ExpectedImpactItem {
+function makeImpact(
+  strategyId: string,
+  measureId: string,
+  impactMode: ExpectedImpactItem["impactMode"],
+  impactValue: number,
+  confidenceScore: EvidenceStrength,
+  rationale: string
+): ExpectedImpactItem {
   const now = nowIso();
   return {
     id: newId("imp"),
     strategyId,
     measureId,
-    score,
-    confidence,
+    impactMode,
+    impactValue,
+    confidenceScore,
     rationale,
     createdAt: now,
     updatedAt: now
@@ -309,8 +319,9 @@ export function createEntity(type: EntityType, workspace: CommitLabWorkspace) {
         id: newId("imp"),
         strategyId: workspace.strategies[0]?.id ?? "",
         measureId: workspace.measures[0]?.id ?? "",
-        score: 0,
-        confidence: "unknown",
+        impactMode: "gapClosure",
+        impactValue: 0,
+        confidenceScore: 0,
         createdAt: now,
         updatedAt: now
       } satisfies ExpectedImpactItem;
@@ -346,21 +357,42 @@ export function collectionFor(type: EntityType, workspace: CommitLabWorkspace) {
 }
 
 function migrateImpact(
-  impact: Partial<ExpectedImpactItem> & { targetId?: string; impact?: string },
+  impact: Partial<ExpectedImpactItem> & { targetId?: string; impact?: string; score?: number; confidence?: Confidence; evidenceId?: string },
   targets: TargetItem[]
 ): ExpectedImpactItem {
   const measureId = impact.measureId ?? targets.find((target) => target.id === impact.targetId)?.measureId ?? "";
+  const migratedScore = typeof impact.score === "number" ? impact.score : impactLevelToScore(impact.impact);
   return {
     id: impact.id ?? newId("imp"),
     strategyId: impact.strategyId ?? "",
     measureId,
-    score: typeof impact.score === "number" ? impact.score : impactLevelToScore(impact.impact),
-    confidence: impact.confidence ?? "unknown",
+    impactMode: impact.impactMode ?? "gapClosure",
+    impactValue: typeof impact.impactValue === "number" ? impact.impactValue : Math.round(migratedScore * 100),
+    numericDirection: impact.numericDirection,
+    confidenceScore: normalizeEvidenceStrength(impact.confidenceScore ?? confidenceToScore(impact.confidence)),
     rationale: impact.rationale,
-    evidenceId: impact.evidenceId,
+    assumptions: impact.assumptions,
+    openQuestions: impact.openQuestions,
+    evidenceIds: impact.evidenceIds ?? (impact.evidenceId ? [impact.evidenceId] : []),
     createdAt: impact.createdAt ?? nowIso(),
     updatedAt: impact.updatedAt ?? nowIso()
   };
+}
+
+function confidenceToScore(confidence: Confidence | undefined): EvidenceStrength {
+  if (confidence === "high") return 0.8;
+  if (confidence === "medium") return 0.6;
+  if (confidence === "low") return 0.2;
+  return 0;
+}
+
+function normalizeEvidenceStrength(value: unknown): EvidenceStrength {
+  if (value === 1) return 1;
+  if (value === 0.8) return 0.8;
+  if (value === 0.6) return 0.6;
+  if (value === 0.4) return 0.4;
+  if (value === 0.2) return 0.2;
+  return 0;
 }
 
 function impactLevelToScore(level: string | undefined) {

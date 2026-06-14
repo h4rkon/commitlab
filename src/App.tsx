@@ -12,6 +12,7 @@ import {
   updateGitLabWorkspace,
   type GitLabConnection
 } from "./gitlab";
+import { calculateExpectedImpact, formatCalculatedValue, formatImpactSummary, measureForCalculation } from "./impact";
 import { qualityHints, workspaceHints } from "./quality";
 import type {
   ActualMovementItem,
@@ -52,6 +53,15 @@ const pages: Array<{ id: Page; label: string }> = [
 
 const valueEntityTypes: EntityType[] = ["values", "measures", "targets", "actualMovements"];
 const strategyEntityTypes: EntityType[] = ["strategyGroups", "strategies", "evidence"];
+const confidenceOptions = ["0", "0.2", "0.4", "0.6", "0.8", "1"];
+const confidenceLabels: Record<string, string> = {
+  "0": "0.0 - Wild guess",
+  "0.2": "0.2 - Weak hypothesis",
+  "0.4": "0.4 - Plausible judgement",
+  "0.6": "0.6 - Some evidence",
+  "0.8": "0.8 - Strong evidence",
+  "1": "1.0 - Proven here"
+};
 
 export function App() {
   const [workspace, setWorkspace] = useState<CommitLabWorkspace>(() => loadWorkspace());
@@ -466,7 +476,7 @@ function WorkspacePage({
             ["2", "Add Measures", "Define how each value could be observed, or leave measures unlinked for now."],
             ["3", "Set Targets", "Attach targets to measures when possible, directly to values when still early."],
             ["4", "Define Strategies", "Describe possible means without pretending they are outcomes."],
-            ["5", "Estimate Impact", "Use the VDT to connect each value/measure/target row with each distinct strategy using a 0..1 score."],
+            ["5", "Estimate Impact", "Use the VDT to connect each value/measure row with each distinct strategy using absolute, relative, or gap-closure assumptions."],
             ["6", "Attach Evidence", "Add notes, links, and observations that support or challenge the model."],
             ["7", "Record Movement", "Log what changed in reality, separate from task progress."]
           ].map(([step, title, text]) => (
@@ -833,14 +843,21 @@ function StrategyEditor({ item, workspace, updateItem }: { item: StrategyItem; w
 }
 
 function ImpactEditor({ item, workspace, updateItem }: { item: ExpectedImpactItem; workspace: CommitLabWorkspace; updateItem: (patch: Record<string, unknown>) => void }) {
+  const measure = workspace.measures.find((candidate) => candidate.id === item.measureId);
+  const calculated = measure ? calculateExpectedImpact(measureForCalculation(measure), item) : { calculationWarning: "Select a measurement row first." };
   return (
     <div className="form-stack">
       <SelectInput label="Strategy" value={item.strategyId} options={workspace.strategies.map((strategy) => strategy.id)} labels={optionLabels(workspace, "strategies")} onChange={(strategyId) => updateItem({ strategyId })} />
       <SelectInput label="Measurement row" value={item.measureId} options={workspace.measures.map((measure) => measure.id)} labels={measureOptionLabels(workspace)} onChange={(measureId) => updateItem({ measureId })} />
-      <NumberInput label="Expected impact score, 0..1" value={item.score} min={0} max={1} step={0.05} onChange={(score) => updateItem({ score })} />
-      <SelectInput label="Confidence" value={item.confidence ?? "unknown"} options={["low", "medium", "high", "unknown"]} onChange={(confidence) => updateItem({ confidence })} />
-      <SelectInput label="Evidence" value={item.evidenceId ?? ""} options={["", ...workspace.evidence.map((evidence) => evidence.id)]} labels={optionLabels(workspace, "evidence")} onChange={(evidenceId) => updateItem({ evidenceId: evidenceId || undefined })} />
+      <SelectInput label="Impact mode" value={item.impactMode} options={["absolute", "relative", "gapClosure"]} onChange={(impactMode) => updateItem({ impactMode })} />
+      <NumberInput label="Impact value" value={item.impactValue} min={0} step={item.impactMode === "absolute" ? 1 : 5} onChange={(impactValue) => updateItem({ impactValue })} />
+      <SelectInput label="Numeric direction" value={item.numericDirection ?? ""} options={["", "increase", "decrease"]} onChange={(numericDirection) => updateItem({ numericDirection: numericDirection || undefined })} />
+      <SelectInput label="Confidence score" value={String(item.confidenceScore)} options={confidenceOptions} labels={confidenceLabels} onChange={(confidenceScore) => updateItem({ confidenceScore: Number(confidenceScore) })} />
+      <MultiSelectInput label="Linked evidence" values={item.evidenceIds ?? []} options={workspace.evidence.map((evidence) => evidence.id)} labels={optionLabels(workspace, "evidence")} onChange={(evidenceIds) => updateItem({ evidenceIds })} />
       <TextArea label="Rationale" value={item.rationale ?? ""} onChange={(rationale) => updateItem({ rationale })} />
+      <TextArea label="Assumptions" value={item.assumptions ?? ""} onChange={(assumptions) => updateItem({ assumptions })} />
+      <TextArea label="Open questions" value={item.openQuestions ?? ""} onChange={(openQuestions) => updateItem({ openQuestions })} />
+      <CalculationReadout calculated={calculated} unit={measure?.unit} />
     </div>
   );
 }
@@ -852,9 +869,11 @@ function EvidenceEditor({ item, workspace, updateItem }: { item: EvidenceItem; w
     <div className="form-stack">
       <TextInput label="Title" value={item.title} onChange={(title) => updateItem({ title })} />
       <TextArea label="Description" value={item.description ?? ""} onChange={(description) => updateItem({ description })} />
-      <SelectInput label="Linked entity type" value={item.linkedEntityType ?? ""} options={["", "value", "measure", "target", "strategyGroup", "strategy", "expectedImpact"]} onChange={(linkedEntityType) => updateItem({ linkedEntityType: linkedEntityType || undefined, linkedEntityId: undefined })} />
+      <SelectInput label="Linked entity type" value={item.linkedEntityType ?? ""} options={["", "value", "measure", "target", "strategyGroup", "strategy", "expectedImpact", "actualMovement"]} onChange={(linkedEntityType) => updateItem({ linkedEntityType: linkedEntityType || undefined, linkedEntityId: undefined })} />
       <SelectInput label="Linked entity" value={item.linkedEntityId ?? ""} options={["", ...linkedOptions]} labels={linkedType ? optionLabels(workspace, linkedType) : { "": "None" }} onChange={(linkedEntityId) => updateItem({ linkedEntityId: linkedEntityId || undefined })} />
-      <SelectInput label="Source type" value={item.sourceType ?? "note"} options={["note", "url", "gitlab", "document", "meeting", "other"]} onChange={(sourceType) => updateItem({ sourceType })} />
+      <SelectInput label="Source type" value={item.sourceType ?? "note"} options={["note", "meeting", "metric", "crm", "document", "url", "gitlab", "customerFeedback", "expertJudgement", "benchmark", "other"]} onChange={(sourceType) => updateItem({ sourceType })} />
+      <SelectInput label="Position" value={item.position ?? "neutral"} options={["supports", "challenges", "neutral"]} onChange={(position) => updateItem({ position })} />
+      <SelectInput label="Evidence strength" value={String(item.evidenceStrength ?? 0)} options={confidenceOptions} labels={confidenceLabels} onChange={(evidenceStrength) => updateItem({ evidenceStrength: Number(evidenceStrength) })} />
       <TextInput label="Source" value={item.source ?? ""} onChange={(source) => updateItem({ source })} />
     </div>
   );
@@ -879,6 +898,8 @@ function ImpactTablePage({ workspace, updateWorkspace }: { workspace: CommitLabW
   const activeImpact = editing
     ? workspace.expectedImpacts.find((item) => item.measureId === editing.measureId && item.strategyId === editing.strategyId)
     : undefined;
+  const activeMeasure = editing ? workspace.measures.find((item) => item.id === editing.measureId) : undefined;
+  const activeCalculated = activeImpact && activeMeasure ? calculateExpectedImpact(measureForCalculation(activeMeasure), activeImpact) : undefined;
 
   const updateCell = (patch: Partial<ExpectedImpactItem>) => {
     if (!editing) return;
@@ -898,10 +919,14 @@ function ImpactTablePage({ workspace, updateWorkspace }: { workspace: CommitLabW
             id: `imp_${editing.measureId}_${editing.strategyId}`,
             measureId: editing.measureId,
             strategyId: editing.strategyId,
-            score: patch.score ?? 0,
-            confidence: patch.confidence ?? "unknown",
+            impactMode: patch.impactMode ?? "gapClosure",
+            impactValue: patch.impactValue ?? 0,
+            numericDirection: patch.numericDirection,
+            confidenceScore: patch.confidenceScore ?? 0,
             rationale: patch.rationale,
-            evidenceId: patch.evidenceId,
+            assumptions: patch.assumptions,
+            openQuestions: patch.openQuestions,
+            evidenceIds: patch.evidenceIds ?? [],
             createdAt: nowIso(),
             updatedAt: nowIso()
           }
@@ -911,13 +936,51 @@ function ImpactTablePage({ workspace, updateWorkspace }: { workspace: CommitLabW
   };
   const rows = measurementRows(workspace);
 
+  const createEvidenceForCell = () => {
+    if (!editing) return;
+    const now = nowIso();
+    const evidence: EvidenceItem = {
+      id: `ev_${Date.now().toString(36)}`,
+      title: "New evidence for impact assumption",
+      linkedEntityType: "expectedImpact",
+      sourceType: "note",
+      position: "supports",
+      evidenceStrength: 0.4,
+      createdAt: now,
+      updatedAt: now
+    };
+    updateWorkspace((current) => {
+      const existing = current.expectedImpacts.find((item) => item.measureId === editing.measureId && item.strategyId === editing.strategyId);
+      const impact =
+        existing ??
+        ({
+          id: `imp_${editing.measureId}_${editing.strategyId}`,
+          measureId: editing.measureId,
+          strategyId: editing.strategyId,
+          impactMode: "gapClosure",
+          impactValue: 0,
+          confidenceScore: 0,
+          createdAt: now,
+          updatedAt: now
+        } satisfies ExpectedImpactItem);
+      evidence.linkedEntityId = impact.id;
+      return {
+        ...current,
+        evidence: [...current.evidence, evidence],
+        expectedImpacts: existing
+          ? current.expectedImpacts.map((item) => (item.id === existing.id ? { ...item, evidenceIds: [...new Set([...(item.evidenceIds ?? []), evidence.id])], updatedAt: now } : item))
+          : [...current.expectedImpacts, { ...impact, evidenceIds: [evidence.id] }]
+      };
+    });
+  };
+
   return (
     <div className="impact-layout">
       <section className="panel">
         <div className="section-heading">
           <div>
             <h2>Value Decision Table</h2>
-            <p>Rows are Value/Objectives with ambition and measurements. Columns are strategy groups and distinct strategies. Cell scores are expected impact from 0 to 1.</p>
+            <p>Rows are Value/Objectives with ambition and measurements. Columns are strategy groups and distinct strategies. Cells model raw and confidence-adjusted expected movement.</p>
           </div>
         </div>
         {rows.length && workspace.strategies.length ? (
@@ -957,11 +1020,14 @@ function ImpactTablePage({ workspace, updateWorkspace }: { workspace: CommitLabW
                     <td>{row.measure.tolerable}</td>
                     {workspace.strategies.map((strategy) => {
                       const impact = workspace.expectedImpacts.find((item) => item.measureId === row.measure.id && item.strategyId === strategy.id);
+                      const calculated = impact ? calculateExpectedImpact(measureForCalculation(row.measure), impact) : undefined;
                       return (
                         <td key={strategy.id}>
-                          <button className={`impact-cell ${scoreClass(impact?.score)}`} onClick={() => setEditing({ measureId: row.measure.id, strategyId: strategy.id })}>
-                            <strong>{formatScore(impact?.score)}</strong>
-                            <span>{impact?.confidence ?? "unknown"}</span>
+                          <button className={`impact-cell ${impactClass(impact, calculated?.calculationWarning)}`} onClick={() => setEditing({ measureId: row.measure.id, strategyId: strategy.id })}>
+                            <strong>{impact ? formatImpactSummary(impact) : "No impact"}</strong>
+                            <span>Confidence {impact?.confidenceScore ?? 0}</span>
+                            {calculated?.riskAdjustedProjectedValue !== undefined && <span>Risk-adjusted {formatCalculatedValue(calculated.riskAdjustedProjectedValue, row.measure.unit)}</span>}
+                            {calculated?.calculationWarning && <span>{calculated.calculationWarning}</span>}
                           </button>
                         </td>
                       );
@@ -982,10 +1048,17 @@ function ImpactTablePage({ workspace, updateWorkspace }: { workspace: CommitLabW
             <p className="note">
               {measureOptionLabels(workspace)[editing.measureId]} {"<-"} {getEntityTitle(workspace, "strategies", editing.strategyId)}
             </p>
-            <NumberInput label="Expected impact score, 0..1" value={activeImpact?.score ?? 0} min={0} max={1} step={0.05} onChange={(score) => updateCell({ score })} />
-            <SelectInput label="Confidence" value={activeImpact?.confidence ?? "unknown"} options={["low", "medium", "high", "unknown"]} onChange={(confidence) => updateCell({ confidence: confidence as ExpectedImpactItem["confidence"] })} />
-            <SelectInput label="Evidence" value={activeImpact?.evidenceId ?? ""} options={["", ...workspace.evidence.map((evidence) => evidence.id)]} labels={optionLabels(workspace, "evidence")} onChange={(evidenceId) => updateCell({ evidenceId: evidenceId || undefined })} />
+            <SelectInput label="Impact mode" value={activeImpact?.impactMode ?? "gapClosure"} options={["absolute", "relative", "gapClosure"]} onChange={(impactMode) => updateCell({ impactMode: impactMode as ExpectedImpactItem["impactMode"] })} />
+            <NumberInput label="Impact value" value={activeImpact?.impactValue ?? 0} min={0} step={activeImpact?.impactMode === "absolute" ? 1 : 5} onChange={(impactValue) => updateCell({ impactValue })} />
+            <SelectInput label="Numeric direction" value={activeImpact?.numericDirection ?? ""} options={["", "increase", "decrease"]} onChange={(numericDirection) => updateCell({ numericDirection: (numericDirection || undefined) as ExpectedImpactItem["numericDirection"] })} />
+            <SelectInput label="Confidence score" value={String(activeImpact?.confidenceScore ?? 0)} options={confidenceOptions} labels={confidenceLabels} onChange={(confidenceScore) => updateCell({ confidenceScore: Number(confidenceScore) as ExpectedImpactItem["confidenceScore"] })} />
+            <MultiSelectInput label="Linked evidence" values={activeImpact?.evidenceIds ?? []} options={workspace.evidence.map((evidence) => evidence.id)} labels={optionLabels(workspace, "evidence")} onChange={(evidenceIds) => updateCell({ evidenceIds })} />
+            <button onClick={createEvidenceForCell}>Create evidence for this cell</button>
             <TextArea label="Rationale" value={activeImpact?.rationale ?? ""} onChange={(rationale) => updateCell({ rationale })} />
+            <TextArea label="Assumptions" value={activeImpact?.assumptions ?? ""} onChange={(assumptions) => updateCell({ assumptions })} />
+            <TextArea label="Open questions" value={activeImpact?.openQuestions ?? ""} onChange={(openQuestions) => updateCell({ openQuestions })} />
+            {activeCalculated && <CalculationReadout calculated={activeCalculated} unit={activeMeasure?.unit} />}
+            <EvidenceStrengthHint impact={activeImpact} workspace={workspace} />
           </div>
         ) : (
           <p className="empty">Select a table cell.</p>
@@ -1098,6 +1171,64 @@ function SelectInput({
   );
 }
 
+function MultiSelectInput({
+  label,
+  values,
+  options,
+  labels,
+  onChange
+}: {
+  label: string;
+  values: string[];
+  options: string[];
+  labels?: Record<string, string>;
+  onChange: (values: string[]) => void;
+}) {
+  const toggle = (option: string) => {
+    onChange(values.includes(option) ? values.filter((value) => value !== option) : [...values, option]);
+  };
+
+  return (
+    <fieldset className="checkbox-group">
+      <legend>{label}</legend>
+      {options.length ? (
+        options.map((option) => (
+          <label key={option}>
+            <input checked={values.includes(option)} type="checkbox" onChange={() => toggle(option)} />
+            <span>{labels?.[option] ?? option}</span>
+          </label>
+        ))
+      ) : (
+        <p className="empty">No evidence created yet.</p>
+      )}
+    </fieldset>
+  );
+}
+
+function CalculationReadout({ calculated, unit }: { calculated: ReturnType<typeof calculateExpectedImpact>; unit?: string }) {
+  if (calculated.calculationWarning) {
+    return <p className="warning-text">Projection unavailable: {calculated.calculationWarning}</p>;
+  }
+  return (
+    <div className="calculation-readout">
+      <strong>Calculated projection</strong>
+      <span>Raw projected: {formatCalculatedValue(calculated.rawProjectedValue, unit)}</span>
+      <span>Raw delta: {formatCalculatedValue(calculated.rawDelta, unit)}</span>
+      <span>Risk-adjusted delta: {formatCalculatedValue(calculated.riskAdjustedDelta, unit)}</span>
+      <span>Risk-adjusted projected: {formatCalculatedValue(calculated.riskAdjustedProjectedValue, unit)}</span>
+    </div>
+  );
+}
+
+function EvidenceStrengthHint({ impact, workspace }: { impact: ExpectedImpactItem | undefined; workspace: CommitLabWorkspace }) {
+  if (!impact?.evidenceIds?.length) return null;
+  const linkedEvidence = workspace.evidence.filter((item) => impact.evidenceIds?.includes(item.id) && typeof item.evidenceStrength === "number");
+  if (!linkedEvidence.length) return null;
+  const average = linkedEvidence.reduce((sum, item) => sum + (item.evidenceStrength ?? 0), 0) / linkedEvidence.length;
+  if (Math.abs(average - impact.confidenceScore) < 0.01) return null;
+  return <p className="note">Linked evidence average strength is {average.toFixed(1)}. Current confidence score is {impact.confidenceScore}. Consider whether confidence should change.</p>;
+}
+
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="stat">
@@ -1134,15 +1265,12 @@ function measurementRows(workspace: CommitLabWorkspace) {
   });
 }
 
-function formatScore(score: number | undefined) {
-  return typeof score === "number" ? score.toFixed(2) : "0.00";
-}
-
-function scoreClass(score: number | undefined) {
-  if (typeof score !== "number") return "impact-unknown";
-  if (score >= 0.75) return "impact-high";
-  if (score >= 0.45) return "impact-medium";
-  if (score > 0) return "impact-low";
+function impactClass(impact: ExpectedImpactItem | undefined, warning: string | undefined) {
+  if (!impact) return "impact-unknown";
+  if (warning) return "impact-low";
+  if (impact.confidenceScore >= 0.8) return "impact-high";
+  if (impact.confidenceScore >= 0.4) return "impact-medium";
+  if (impact.confidenceScore > 0) return "impact-low";
   return "impact-none";
 }
 
@@ -1152,6 +1280,7 @@ function pluralEntityType(type: EvidenceItem["linkedEntityType"]): EntityType | 
   if (type === "measure") return "measures";
   if (type === "target") return "targets";
   if (type === "strategyGroup") return "strategyGroups";
-  if (type === "strategy") return "strategies";
+  if (type === "strategy" || type === "strategyOption") return "strategies";
+  if (type === "actualMovement") return "actualMovements";
   return "expectedImpacts";
 }

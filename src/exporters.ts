@@ -1,4 +1,5 @@
 import type { CommitLabWorkspace, ExpectedImpactItem } from "./types";
+import { calculateExpectedImpact, formatCalculatedValue, formatImpactSummary, measureForCalculation } from "./impact";
 
 export function buildMarkdown(workspace: CommitLabWorkspace) {
   const lines: string[] = [];
@@ -16,7 +17,16 @@ export function buildMarkdown(workspace: CommitLabWorkspace) {
   section(
     lines,
     "Expected Impacts",
-    workspace.expectedImpacts.map((item) => `- ${entityName(workspace, item)}: ${formatScore(item.score)}, confidence ${item.confidence ?? "unknown"}`)
+    workspace.expectedImpacts.map((item) => {
+      const measure = workspace.measures.find((candidate) => candidate.id === item.measureId);
+      const calculated = measure ? calculateExpectedImpact(measureForCalculation(measure), item) : undefined;
+      const projection = calculated?.riskAdjustedProjectedValue !== undefined
+        ? `, risk-adjusted projected ${formatCalculatedValue(calculated.riskAdjustedProjectedValue, measure?.unit)}`
+        : calculated?.calculationWarning
+          ? `, projection unavailable: ${calculated.calculationWarning}`
+          : "";
+      return `- ${entityName(workspace, item)}: ${formatImpactSummary(item)}, confidence ${item.confidenceScore}${projection}`;
+    })
   );
   section(lines, "Evidence", workspace.evidence.map((item) => `- ${item.title}${item.source ? `: ${item.source}` : ""}`));
   section(lines, "Actual Movement", workspace.actualMovements.map((item) => `- ${item.observedValue || item.comment || item.id}`));
@@ -36,7 +46,7 @@ export function buildMarkdown(workspace: CommitLabWorkspace) {
         row.measure.target ?? "",
         row.measure.wish ?? "",
         row.measure.tolerable ?? "",
-        ...workspace.strategies.map((strategy) => impactFor(workspace.expectedImpacts, row.measure.id, strategy.id))
+        ...workspace.strategies.map((strategy) => impactFor(workspace.expectedImpacts, row.measure.id, strategy.id, row.measure.unit, workspace))
       ].join(" | "));
     }
   }
@@ -49,9 +59,13 @@ function section(lines: string[], title: string, items: string[]) {
   lines.push("");
 }
 
-function impactFor(items: ExpectedImpactItem[], measureId: string, strategyId: string): string {
+function impactFor(items: ExpectedImpactItem[], measureId: string, strategyId: string, unit: string | undefined, workspace: CommitLabWorkspace): string {
   const impact = items.find((item) => item.measureId === measureId && item.strategyId === strategyId);
-  return impact ? formatScore(impact.score) : "";
+  const measure = workspace.measures.find((item) => item.id === measureId);
+  if (!impact) return "";
+  const calculated = measure ? calculateExpectedImpact(measureForCalculation(measure), impact) : undefined;
+  const projected = calculated?.riskAdjustedProjectedValue !== undefined ? ` -> ${formatCalculatedValue(calculated.riskAdjustedProjectedValue, unit)}` : "";
+  return `${formatImpactSummary(impact)} (c ${impact.confidenceScore})${projected}`;
 }
 
 function entityName(workspace: CommitLabWorkspace, impact: ExpectedImpactItem) {
@@ -66,10 +80,6 @@ function measurementRows(workspace: CommitLabWorkspace) {
     const value = workspace.values.find((item) => item.id === measure.valueId);
     return { measure, value };
   });
-}
-
-function formatScore(score: number | undefined) {
-  return typeof score === "number" ? score.toFixed(2) : "0.00";
 }
 
 export function downloadText(filename: string, text: string, type: string) {
