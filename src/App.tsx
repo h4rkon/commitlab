@@ -62,6 +62,8 @@ const confidenceLabels: Record<string, string> = {
   "0.8": "0.8 - Strong evidence",
   "1": "1.0 - Proven here"
 };
+const impactModeHelp =
+  "Absolute impact: fixed movement in the measure's own unit, e.g. +10 percentage points makes 10% -> 20%. Relative impact: percentage change of the current value, e.g. +50% relative makes 10% -> 15%. Gap closure impact: closes part of the Now-to-Target gap, e.g. 50% of the gap from 10% to 30% gives 20%.";
 
 export function App() {
   const [workspace, setWorkspace] = useState<CommitLabWorkspace>(() => loadWorkspace());
@@ -849,7 +851,7 @@ function ImpactEditor({ item, workspace, updateItem }: { item: ExpectedImpactIte
     <div className="form-stack">
       <SelectInput label="Strategy" value={item.strategyId} options={workspace.strategies.map((strategy) => strategy.id)} labels={optionLabels(workspace, "strategies")} onChange={(strategyId) => updateItem({ strategyId })} />
       <SelectInput label="Measurement row" value={item.measureId} options={workspace.measures.map((measure) => measure.id)} labels={measureOptionLabels(workspace)} onChange={(measureId) => updateItem({ measureId })} />
-      <SelectInput label="Impact mode" value={item.impactMode} options={["absolute", "relative", "gapClosure"]} onChange={(impactMode) => updateItem({ impactMode })} />
+      <SelectInput label="Impact mode" value={item.impactMode} options={["absolute", "relative", "gapClosure"]} helpText={impactModeHelp} onChange={(impactMode) => updateItem({ impactMode })} />
       <NumberInput label="Impact value" value={item.impactValue} min={0} step={item.impactMode === "absolute" ? 1 : 5} onChange={(impactValue) => updateItem({ impactValue })} />
       <SelectInput label="Numeric direction" value={item.numericDirection ?? ""} options={["", "increase", "decrease"]} onChange={(numericDirection) => updateItem({ numericDirection: numericDirection || undefined })} />
       <SelectInput label="Confidence score" value={String(item.confidenceScore)} options={confidenceOptions} labels={confidenceLabels} onChange={(confidenceScore) => updateItem({ confidenceScore: Number(confidenceScore) })} />
@@ -1059,7 +1061,7 @@ function ImpactTablePage({ workspace, updateWorkspace }: { workspace: CommitLabW
             <p className="note">
               {measureOptionLabels(workspace)[editing.measureId]} {"<-"} {getEntityTitle(workspace, "strategies", editing.strategyId)}
             </p>
-            <SelectInput label="Impact mode" value={activeImpact?.impactMode ?? "gapClosure"} options={["absolute", "relative", "gapClosure"]} onChange={(impactMode) => updateCell({ impactMode: impactMode as ExpectedImpactItem["impactMode"] })} />
+            <SelectInput label="Impact mode" value={activeImpact?.impactMode ?? "gapClosure"} options={["absolute", "relative", "gapClosure"]} helpText={impactModeHelp} onChange={(impactMode) => updateCell({ impactMode: impactMode as ExpectedImpactItem["impactMode"] })} />
             <NumberInput label="Impact value" value={activeImpact?.impactValue ?? 0} min={0} step={activeImpact?.impactMode === "absolute" ? 1 : 5} onChange={(impactValue) => updateCell({ impactValue })} />
             <SelectInput label="Numeric direction" value={activeImpact?.numericDirection ?? ""} options={["", "increase", "decrease"]} onChange={(numericDirection) => updateCell({ numericDirection: (numericDirection || undefined) as ExpectedImpactItem["numericDirection"] })} />
             <SelectInput label="Confidence score" value={String(activeImpact?.confidenceScore ?? 0)} options={confidenceOptions} labels={confidenceLabels} onChange={(confidenceScore) => updateCell({ confidenceScore: Number(confidenceScore) as ExpectedImpactItem["confidenceScore"] })} />
@@ -1160,18 +1162,23 @@ function SelectInput({
   value,
   options,
   labels,
+  helpText,
   onChange
 }: {
   label: string;
   value: string;
   options: string[];
   labels?: Record<string, string>;
+  helpText?: string;
   onChange: (value: string) => void;
 }) {
   return (
-    <label>
-      <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+    <label title={helpText}>
+      <span>
+        {label}
+        {helpText && <span className="help-indicator" aria-label={helpText}>?</span>}
+      </span>
+      <select value={value} title={helpText} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => (
           <option key={option} value={option}>
             {labels?.[option] ?? (option || "None")}
