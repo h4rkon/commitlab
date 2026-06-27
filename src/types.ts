@@ -28,6 +28,10 @@ export interface GitLabSettings {
   filePath: string;
 }
 
+export interface GitConnectionSettings extends GitLabSettings {
+  provider: "gitlab" | "github";
+}
+
 export interface ValueItem {
   id: string;
   title: string;
@@ -143,6 +147,7 @@ export interface CommitLabWorkspace {
   evidence: EvidenceItem[];
   actualMovements: ActualMovementItem[];
   settings: {
+    git: GitConnectionSettings;
     gitlab: GitLabSettings;
   };
 }

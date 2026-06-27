@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildMarkdown, downloadText } from "./exporters";
 import {
-  clearStoredGitLabConnection,
-  createGitLabWorkspace,
-  getStoredGitLabConnection,
-  isMissingGitLabFile,
-  loadGitLabWorkspace,
+  clearStoredGitConnection,
+  createGitWorkspace,
+  getStoredGitConnection,
+  isMissingGitFile,
+  loadGitWorkspace,
   normalizeConnection,
-  storeGitLabConnection,
-  testGitLabConnection,
-  updateGitLabWorkspace,
-  type GitLabConnection
+  storeGitConnection,
+  testGitConnection,
+  updateGitWorkspace,
+  type GitConnection
 } from "./gitlab";
 import { calculateExpectedImpact, formatCalculatedValue, formatImpactSummary, formatSignedCalculatedValue, measureForCalculation } from "./impact";
 import { qualityHints, workspaceHints } from "./quality";
@@ -65,13 +65,17 @@ const confidenceLabels: Record<string, string> = {
 const impactModeHelp =
   "Absolute impact: fixed movement in the measure's own unit, e.g. +10 percentage points makes 10% -> 20%. Relative impact: percentage change of the current value, e.g. +50% relative makes 10% -> 15%. Gap closure impact: closes part of the Now-to-Target gap, e.g. 50% of the gap from 10% to 30% gives 20%.";
 
+function providerLabel(provider: GitConnection["provider"]) {
+  return provider === "github" ? "GitHub" : "GitLab";
+}
+
 export function App() {
   const [workspace, setWorkspace] = useState<CommitLabWorkspace>(() => loadWorkspace());
   const [page, setPage] = useState<Page>("workspace");
   const [activeType, setActiveType] = useState<EntityType>("values");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState("Saved locally");
-  const [gitLabConnection, setGitLabConnection] = useState<GitLabConnection | undefined>(() => getStoredGitLabConnection());
+  const [gitConnection, setGitConnection] = useState<GitConnection | undefined>(() => getStoredGitConnection());
   const [remoteLastCommitId, setRemoteLastCommitId] = useState<string | undefined>();
   const [remoteDirty, setRemoteDirty] = useState(false);
   const [remoteBusy, setRemoteBusy] = useState(false);
@@ -84,20 +88,27 @@ export function App() {
 
   const updateWorkspace = (updater: (current: CommitLabWorkspace) => CommitLabWorkspace) => {
     setSaveState("Unsaved changes");
-    setRemoteDirty(Boolean(gitLabConnection));
+    setRemoteDirty(Boolean(gitConnection));
     setWorkspace((current) => {
       const next = updater(current);
       return { ...next, workspace: { ...next.workspace, updatedAt: nowIso() } };
     });
   };
 
-  const persistGitLabConnection = (connection: GitLabConnection) => {
+  const persistGitConnection = (connection: GitConnection) => {
     const normalized = normalizeConnection(connection);
-    setGitLabConnection(normalized);
-    storeGitLabConnection(normalized);
+    setGitConnection(normalized);
+    storeGitConnection(normalized);
     setWorkspace((current) => ({
       ...current,
       settings: {
+        git: {
+          provider: normalized.provider,
+          baseUrl: normalized.baseUrl,
+          projectPath: normalized.projectPath,
+          branch: normalized.branch,
+          filePath: normalized.filePath
+        },
         gitlab: {
           baseUrl: normalized.baseUrl,
           projectPath: normalized.projectPath,
@@ -115,25 +126,25 @@ export function App() {
     try {
       await action();
     } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : "GitLab operation failed");
+      setRemoteError(error instanceof Error ? error.message : "Git operation failed");
     } finally {
       setRemoteBusy(false);
     }
   };
 
-  const saveToGitLab = async () => {
-    if (!gitLabConnection) {
-      setRemoteError("Connect a GitLab repository first.");
+  const saveToGit = async () => {
+    if (!gitConnection) {
+      setRemoteError("Connect a Git repository first.");
       return;
     }
     await runRemoteAction(async () => {
       let commitId = remoteLastCommitId;
       if (!commitId) {
         try {
-          const remote = await loadGitLabWorkspace(gitLabConnection);
+          const remote = await loadGitWorkspace(gitConnection);
           commitId = remote.lastCommitId;
         } catch (error) {
-          if (!isMissingGitLabFile(error)) {
+          if (!isMissingGitFile(error)) {
             throw error;
           }
         }
@@ -141,30 +152,37 @@ export function App() {
       const workspaceToSave = {
         ...workspace,
         settings: {
+          git: {
+            provider: gitConnection.provider,
+            baseUrl: gitConnection.baseUrl,
+            projectPath: gitConnection.projectPath,
+            branch: gitConnection.branch,
+            filePath: gitConnection.filePath
+          },
           gitlab: {
-            baseUrl: gitLabConnection.baseUrl,
-            projectPath: gitLabConnection.projectPath,
-            branch: gitLabConnection.branch,
-            filePath: gitLabConnection.filePath
+            baseUrl: gitConnection.baseUrl,
+            projectPath: gitConnection.projectPath,
+            branch: gitConnection.branch,
+            filePath: gitConnection.filePath
           }
         }
       };
       const nextCommitId = commitId
-        ? await updateGitLabWorkspace(gitLabConnection, workspaceToSave, commitId)
-        : await createGitLabWorkspace(gitLabConnection, workspaceToSave);
+        ? await updateGitWorkspace(gitConnection, workspaceToSave, commitId)
+        : await createGitWorkspace(gitConnection, workspaceToSave);
       setRemoteLastCommitId(nextCommitId);
       setRemoteDirty(false);
-      setSaveState("Saved to GitLab");
-      setRemoteMessage("Workspace saved to GitLab.");
+      setSaveState(`Saved to ${providerLabel(gitConnection.provider)}`);
+      setRemoteMessage(`Workspace saved to ${providerLabel(gitConnection.provider)}.`);
     });
   };
 
-  const disconnectGitLab = () => {
-    clearStoredGitLabConnection();
-    setGitLabConnection(undefined);
+  const disconnectGit = () => {
+    clearStoredGitConnection();
+    setGitConnection(undefined);
     setRemoteLastCommitId(undefined);
     setRemoteDirty(false);
-    setRemoteMessage("Disconnected from GitLab. Local draft remains available.");
+    setRemoteMessage("Disconnected from Git. Local draft remains available.");
     setRemoteError("");
   };
 
@@ -186,12 +204,12 @@ export function App() {
           <h1>{workspace.workspace.name || "CommitLab Workspace"}</h1>
         </div>
         <div className="top-actions">
-          {gitLabConnection && (
-            <button disabled={remoteBusy || !remoteDirty} onClick={saveToGitLab}>
-              {remoteBusy ? "Saving..." : remoteDirty ? "Save to GitLab" : "GitLab saved"}
+          {gitConnection && (
+            <button disabled={remoteBusy || !remoteDirty} onClick={saveToGit}>
+              {remoteBusy ? "Saving..." : remoteDirty ? `Save to ${providerLabel(gitConnection.provider)}` : `${providerLabel(gitConnection.provider)} saved`}
             </button>
           )}
-          <div className="status">{gitLabConnection ? `${saveState}${remoteDirty ? " (not pushed)" : ""}` : "Saved locally"}</div>
+          <div className="status">{gitConnection ? `${saveState}${remoteDirty ? " (not pushed)" : ""}` : "Saved locally"}</div>
         </div>
       </header>
 
@@ -209,9 +227,9 @@ export function App() {
             workspace={workspace}
             updateWorkspace={updateWorkspace}
             setWorkspace={setWorkspace}
-            connection={gitLabConnection}
-            persistConnection={persistGitLabConnection}
-            disconnectGitLab={disconnectGitLab}
+            connection={gitConnection}
+            persistConnection={persistGitConnection}
+            disconnectGit={disconnectGit}
             remoteBusy={remoteBusy}
             remoteMessage={remoteMessage}
             remoteError={remoteError}
@@ -250,7 +268,7 @@ function ConnectPage({
   setWorkspace,
   connection,
   persistConnection,
-  disconnectGitLab,
+  disconnectGit,
   remoteBusy,
   remoteMessage,
   remoteError,
@@ -263,9 +281,9 @@ function ConnectPage({
   workspace: CommitLabWorkspace;
   updateWorkspace: (updater: (current: CommitLabWorkspace) => CommitLabWorkspace) => void;
   setWorkspace: (workspace: CommitLabWorkspace) => void;
-  connection: GitLabConnection | undefined;
-  persistConnection: (connection: GitLabConnection) => void;
-  disconnectGitLab: () => void;
+  connection: GitConnection | undefined;
+  persistConnection: (connection: GitConnection) => void;
+  disconnectGit: () => void;
   remoteBusy: boolean;
   remoteMessage: string;
   remoteError: string;
@@ -275,8 +293,8 @@ function ConnectPage({
   setRemoteDirty: (dirty: boolean) => void;
   setSaveState: (state: string) => void;
 }) {
-  const [form, setForm] = useState<GitLabConnection>(() => ({
-    ...workspace.settings.gitlab,
+  const [form, setForm] = useState<GitConnection>(() => ({
+    ...(workspace.settings.git ?? { provider: "gitlab", ...workspace.settings.gitlab }),
     ...connection,
     token: connection?.token ?? ""
   }));
@@ -292,21 +310,21 @@ function ConnectPage({
   const testConnection = () =>
     runRemoteAction(async () => {
       const normalized = currentConnection();
-      await testGitLabConnection(normalized);
+      await testGitConnection(normalized);
       persistConnection(normalized);
-      setRemoteMessage("GitLab connection works.");
+      setRemoteMessage(`${providerLabel(normalized.provider)} connection works.`);
     });
 
   const loadRemoteWorkspace = () =>
     runRemoteAction(async () => {
       const normalized = currentConnection();
-      const remote = await loadGitLabWorkspace(normalized);
+      const remote = await loadGitWorkspace(normalized);
       persistConnection(normalized);
       setWorkspace(workspaceWithConnection(remote.workspace, normalized));
       setRemoteLastCommitId(remote.lastCommitId);
       setRemoteDirty(false);
-      setSaveState("Loaded from GitLab");
-      setRemoteMessage("Workspace loaded from GitLab.");
+      setSaveState(`Loaded from ${providerLabel(normalized.provider)}`);
+      setRemoteMessage(`Workspace loaded from ${providerLabel(normalized.provider)}.`);
     });
 
   const createRemoteWorkspace = () =>
@@ -315,6 +333,13 @@ function ConnectPage({
       const workspaceToCreate: CommitLabWorkspace = {
         ...workspace,
         settings: {
+          git: {
+            provider: normalized.provider,
+            baseUrl: normalized.baseUrl,
+            projectPath: normalized.projectPath,
+            branch: normalized.branch,
+            filePath: normalized.filePath
+          },
           gitlab: {
             baseUrl: normalized.baseUrl,
             projectPath: normalized.projectPath,
@@ -323,32 +348,39 @@ function ConnectPage({
           }
         }
       };
-      const commitId = await createGitLabWorkspace(normalized, workspaceToCreate);
+      const commitId = await createGitWorkspace(normalized, workspaceToCreate);
       persistConnection(normalized);
       setRemoteLastCommitId(commitId);
       setRemoteDirty(false);
-      setSaveState("Saved to GitLab");
-      setRemoteMessage("Workspace created in GitLab.");
+      setSaveState(`Saved to ${providerLabel(normalized.provider)}`);
+      setRemoteMessage(`Workspace created in ${providerLabel(normalized.provider)}.`);
     });
 
   const loadOrCreateRemoteWorkspace = () =>
     runRemoteAction(async () => {
       const normalized = currentConnection();
       try {
-        const remote = await loadGitLabWorkspace(normalized);
+        const remote = await loadGitWorkspace(normalized);
         persistConnection(normalized);
         setWorkspace(workspaceWithConnection(remote.workspace, normalized));
         setRemoteLastCommitId(remote.lastCommitId);
         setRemoteDirty(false);
-        setSaveState("Loaded from GitLab");
-        setRemoteMessage("Workspace loaded from GitLab.");
+        setSaveState(`Loaded from ${providerLabel(normalized.provider)}`);
+        setRemoteMessage(`Workspace loaded from ${providerLabel(normalized.provider)}.`);
       } catch (error) {
-        if (!isMissingGitLabFile(error)) {
+        if (!isMissingGitFile(error)) {
           throw error;
         }
         const workspaceToCreate: CommitLabWorkspace = {
           ...workspace,
           settings: {
+            git: {
+              provider: normalized.provider,
+              baseUrl: normalized.baseUrl,
+              projectPath: normalized.projectPath,
+              branch: normalized.branch,
+              filePath: normalized.filePath
+            },
             gitlab: {
               baseUrl: normalized.baseUrl,
               projectPath: normalized.projectPath,
@@ -357,25 +389,43 @@ function ConnectPage({
             }
           }
         };
-        const commitId = await createGitLabWorkspace(normalized, workspaceToCreate);
+        const commitId = await createGitWorkspace(normalized, workspaceToCreate);
         persistConnection(normalized);
         setRemoteLastCommitId(commitId);
         setRemoteDirty(false);
-        setSaveState("Created in GitLab");
-        setRemoteMessage("Workspace created in GitLab.");
+        setSaveState(`Created in ${providerLabel(normalized.provider)}`);
+        setRemoteMessage(`Workspace created in ${providerLabel(normalized.provider)}.`);
       }
     });
 
-  const updateForm = (key: keyof GitLabConnection, value: string) => {
-    setForm((current) => ({ ...current, [key]: value }));
+  const updateForm = (key: keyof GitConnection, value: string) => {
+    setForm((current) => {
+      if (key === "provider") {
+        const provider = value as GitConnection["provider"];
+        const previousDefault = current.provider === "github" ? "https://github.com" : "https://gitlab.com";
+        return {
+          ...current,
+          provider,
+          baseUrl: !current.baseUrl || current.baseUrl === previousDefault ? (provider === "github" ? "https://github.com" : "https://gitlab.com") : current.baseUrl
+        };
+      }
+      return { ...current, [key]: value };
+    });
     if (key !== "token") {
-      updateGitLab(updateWorkspace, key, value);
+      updateGitSettings(updateWorkspace, key, value);
     }
   };
 
-  const workspaceWithConnection = (source: CommitLabWorkspace, normalized: GitLabConnection): CommitLabWorkspace => ({
+  const workspaceWithConnection = (source: CommitLabWorkspace, normalized: GitConnection): CommitLabWorkspace => ({
     ...source,
     settings: {
+      git: {
+        provider: normalized.provider,
+        baseUrl: normalized.baseUrl,
+        projectPath: normalized.projectPath,
+        branch: normalized.branch,
+        filePath: normalized.filePath
+      },
       gitlab: {
         baseUrl: normalized.baseUrl,
         projectPath: normalized.projectPath,
@@ -390,15 +440,16 @@ function ConnectPage({
       <div className="section-heading">
         <div>
           <h2>Connect</h2>
-          <p>Use a GitLab repository file as the workspace backbone. Each repository and file path represents one independent value workspace.</p>
+          <p>Use a GitHub or GitLab repository file as the workspace backbone. Each repository and file path represents one independent value workspace.</p>
         </div>
       </div>
       <div className="form-grid">
-        <TextInput label="GitLab base URL" value={form.baseUrl} onChange={(value) => updateForm("baseUrl", value)} />
-        <TextInput label="Project ID or path" value={form.projectPath} onChange={(value) => updateForm("projectPath", value)} />
+        <SelectInput label="Git provider" value={form.provider} options={["gitlab", "github"]} labels={{ gitlab: "GitLab", github: "GitHub" }} onChange={(value) => updateForm("provider", value)} />
+        <TextInput label={`${providerLabel(form.provider)} base URL`} value={form.baseUrl} onChange={(value) => updateForm("baseUrl", value)} />
+        <TextInput label={form.provider === "github" ? "Repository path" : "Project ID or path"} value={form.projectPath} placeholder={form.provider === "github" ? "owner/repo" : "group/project or numeric ID"} onChange={(value) => updateForm("projectPath", value)} />
         <TextInput label="Branch" value={form.branch} onChange={(value) => updateForm("branch", value)} />
         <TextInput label="File path" value={form.filePath} onChange={(value) => updateForm("filePath", value)} />
-        <TextInput label="Access token" value={form.token} onChange={(value) => updateForm("token", value)} placeholder="GitLab project or personal access token" type="password" />
+        <TextInput label="Access token" value={form.token} onChange={(value) => updateForm("token", value)} placeholder={form.provider === "github" ? "GitHub PAT with contents read/write" : "GitLab project or personal access token"} type="password" />
       </div>
       <div className="button-row">
         <button disabled={remoteBusy || !form.projectPath.trim() || !form.token.trim()} onClick={testConnection}>Test connection</button>
@@ -406,25 +457,35 @@ function ConnectPage({
         <button disabled={remoteBusy || !form.projectPath.trim() || !form.token.trim()} onClick={createRemoteWorkspace}>Create workspace if missing</button>
         <button disabled={remoteBusy || !form.projectPath.trim() || !form.token.trim()} onClick={loadOrCreateRemoteWorkspace}>Load or create</button>
         <button disabled={remoteBusy || !form.projectPath.trim() || !form.token.trim()} onClick={saveConnection}>Save connection locally</button>
-        {connection && <button disabled={remoteBusy} onClick={disconnectGitLab}>Disconnect</button>}
+        {connection && <button disabled={remoteBusy} onClick={disconnectGit}>Disconnect</button>}
         <button onClick={() => setWorkspace(createEmptyWorkspace())}>Create Empty Workspace</button>
         <button onClick={() => setWorkspace(createDemoWorkspace())}>Load Demo Scenario</button>
       </div>
       {remoteMessage && <p className="success-text">{remoteMessage}</p>}
       {remoteError && <p className="error-text">{remoteError}</p>}
-      <p className="note">Token and connection details are stored in this browser only. Workspace data is stored in GitLab at {form.filePath || "commitlab.json"}.</p>
+      <p className="note">Token and connection details are stored in this browser only. Workspace data is stored in {providerLabel(form.provider)} at {form.filePath || "commitlab.json"}.</p>
     </section>
   );
 }
 
-function updateGitLab(
+function updateGitSettings(
   updateWorkspace: (updater: (current: CommitLabWorkspace) => CommitLabWorkspace) => void,
-  key: keyof CommitLabWorkspace["settings"]["gitlab"],
+  key: keyof GitConnection,
   value: string
 ) {
+  if (key === "token") return;
   updateWorkspace((current) => ({
     ...current,
-    settings: { gitlab: { ...current.settings.gitlab, [key]: value } }
+    settings: {
+      git: {
+        ...current.settings.git,
+        [key]: value
+      },
+      gitlab: {
+        ...current.settings.gitlab,
+        ...(key === "provider" ? {} : { [key]: value })
+      }
+    }
   }));
 }
 

@@ -75,6 +75,13 @@ export function createEmptyWorkspace(): CommitLabWorkspace {
     evidence: [],
     actualMovements: [],
     settings: {
+      git: {
+        provider: "gitlab",
+        baseUrl: "https://gitlab.com",
+        projectPath: "",
+        branch: "main",
+        filePath: "commitlab.json"
+      },
       gitlab: {
         baseUrl: "https://gitlab.com",
         projectPath: "",
@@ -286,6 +293,11 @@ export function normalizeWorkspace(input: unknown): CommitLabWorkspace {
     evidence: source.evidence ?? [],
     actualMovements: source.actualMovements ?? [],
     settings: {
+      git: {
+        ...fallback.settings.git,
+        ...source.settings?.git,
+        ...(source.settings?.gitlab && !source.settings?.git ? source.settings.gitlab : {})
+      },
       gitlab: {
         ...fallback.settings.gitlab,
         ...source.settings?.gitlab
